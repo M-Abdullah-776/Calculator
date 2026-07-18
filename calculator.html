@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black:      #1C1C1C;
+      --dark-gray:  #505050;
+      --light-gray: #D4D4D2;
+      --orange:     #FF9500;
+      --white:      #FFFFFF;
+      --gap:        3px;
+    }
+
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #000;
+      font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .calculator {
+      width: 320px;
+      background: var(--black);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 30px 80px rgba(0,0,0,.9);
+    }
+
+    /* ── Display ── */
+    .display {
+      padding: 18px 16px 10px;
+      text-align: right;
+      min-height: 110px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .expression {
+      font-size: 16px;
+      color: rgba(255,255,255,.4);
+      min-height: 22px;
+      margin-bottom: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .screen {
+      font-size: 64px;
+      font-weight: 300;
+      color: var(--white);
+      line-height: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: font-size .12s ease;
+    }
+    .screen.sm  { font-size: 44px; }
+    .screen.xs  { font-size: 32px; }
+    .screen.err { color: #FF453A; font-size: 28px; }
+
+    /* ── Grid ── */
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: var(--gap);
+      padding: var(--gap);
+    }
+
+    .btn {
+      aspect-ratio: 1;
+      border: none;
+      border-radius: 50%;
+      font-size: 26px;
+      font-weight: 400;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: filter .1s, transform .08s;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .btn:active { filter: brightness(1.4); transform: scale(.93); }
+
+    .btn.digit { background: var(--dark-gray);  color: var(--white); }
+    .btn.top   { background: var(--light-gray); color: var(--black); font-size: 22px; }
+    .btn.op    { background: var(--orange);     color: var(--white); }
+    .btn.op.active { background: var(--white);  color: var(--orange); }
+
+    /* = spans full width */
+    .btn.eq {
+      grid-column: 1 / -1;
+      aspect-ratio: unset;
+      border-radius: 40px;
+      height: 72px;
+      font-size: 30px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="calculator">
+  <div class="display">
+    <div class="expression" id="expr"></div>
+    <div class="screen"     id="screen">0</div>
+  </div>
+  <div class="buttons">
+    <button class="btn top"   data-v="AC">AC</button>
+    <button class="btn top"   data-v="+/-">+/-</button>
+    <button class="btn top"   data-v="%">%</button>
+    <button class="btn op"    data-v="÷">÷</button>
+
+    <button class="btn digit" data-v="7">7</button>
+    <button class="btn digit" data-v="8">8</button>
+    <button class="btn digit" data-v="9">9</button>
+    <button class="btn op"    data-v="×">×</button>
+
+    <button class="btn digit" data-v="4">4</button>
+    <button class="btn digit" data-v="5">5</button>
+    <button class="btn digit" data-v="6">6</button>
+    <button class="btn op"    data-v="-">-</button>
+
+    <button class="btn digit" data-v="1">1</button>
+    <button class="btn digit" data-v="2">2</button>
+    <button class="btn digit" data-v="3">3</button>
+    <button class="btn op"    data-v="+">+</button>
+
+    <button class="btn digit" data-v="⌫">⌫</button>
+    <button class="btn digit" data-v="0">0</button>
+    <button class="btn digit" data-v=".">.</button>
+    <button class="btn op"    data-v="√">√</button>
+
+    <button class="btn op eq" data-v="=">=</button>
+  </div>
+</div>
+
+<script>
+  const scr  = document.getElementById("screen");
+  const expr = document.getElementById("expr");
+  const opBtns = {};
+
+  // ── State (mirrors calculator.py exactly) ─────────────────────────────────
+  let A = "0", operator = null, B = null;
+  let justEvaluated = false, awaitingB = false;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function fmt(n) {
+    // Mirror remove_zero_decimal from Python
+    if (n % 1 === 0) return String(Math.trunc(n));
+    // Guard against floating point display issues
+    let s = String(parseFloat(n.toPrecision(12)));
+    return s;
+  }
+
+  function setScreen(text) {
+    scr.textContent = text;
+    scr.className = "screen";
+    if (text === "Error" || text.startsWith("Cannot") || text.startsWith("Division")) {
+      scr.classList.add("err");
+    } else if (text.length > 12) {
+      scr.classList.add("xs");
+    } else if (text.length > 9) {
+      scr.classList.add("sm");
+    }
+  }
+
+  function highlight(op) {
+    for (const [sym, btn] of Object.entries(opBtns)) {
+      btn.classList.toggle("active", sym === op);
+    }
+  }
+
+  function clearAll() {
+    A = "0"; operator = null; B = null;
+    justEvaluated = false; awaitingB = false;
+    setScreen("0"); expr.textContent = "";
+    highlight(null);
+  }
+
+  // ── Compute binary op (pure JS, no server needed) ─────────────────────────
+  function compute(op, a, b) {
+    const nA = parseFloat(a), nB = parseFloat(b);
+    if (isNaN(nA) || isNaN(nB)) return { error: "Invalid numbers" };
+    if (op === "+") return { result: fmt(nA + nB) };
+    if (op === "-") return { result: fmt(nA - nB) };
+    if (op === "×") return { result: fmt(nA * nB) };
+    if (op === "÷") {
+      if (nB === 0) return { error: "Division by zero" };
+      return { result: fmt(nA / nB) };
+    }
+    return { error: "Unknown op" };
+  }
+
+  // ── Main click handler ────────────────────────────────────────────────────
+  function click(value) {
+
+    // Digits & decimal
+    if ("0123456789".includes(value) || value === ".") {
+      if (justEvaluated) clearAll();
+      if (awaitingB) { setScreen("0"); awaitingB = false; }
+      const cur = scr.textContent;
+      if (value === ".") {
+        if (!cur.includes(".")) setScreen(cur + ".");
+      } else {
+        setScreen(cur === "0" ? value : cur + value);
+      }
+      return;
+    }
+
+    // Backspace
+    if (value === "⌫") {
+      const cur = scr.textContent;
+      setScreen(cur.length <= 1 || cur === "-0" ? "0" : cur.slice(0, -1));
+      return;
+    }
+
+    // AC
+    if (value === "AC") { clearAll(); return; }
+
+    // +/-
+    if (value === "+/-") {
+      const n = parseFloat(scr.textContent);
+      if (!isNaN(n)) setScreen(fmt(n * -1));
+      return;
+    }
+
+    // %
+    if (value === "%") {
+      const n = parseFloat(scr.textContent);
+      if (!isNaN(n)) setScreen(fmt(n / 100));
+      return;
+    }
+
+    // √
+    if (value === "√") {
+      const n = parseFloat(scr.textContent);
+      if (isNaN(n) || n < 0) {
+        setScreen("Error");
+      } else {
+        const r = fmt(Math.sqrt(n));
+        expr.textContent = `√${scr.textContent} =`;
+        setScreen(r);
+      }
+      justEvaluated = true;
+      return;
+    }
+
+    // Binary operators: ÷ × - +
+    if ("÷×-+".includes(value)) {
+      if (operator !== null && !justEvaluated && !awaitingB) {
+        const res = compute(operator, A, scr.textContent);
+        if (res.error) { setScreen(res.error); clearAll(); return; }
+        A = res.result;
+        setScreen(A);
+      }
+      A = scr.textContent;
+      operator = value;
+      justEvaluated = false;
+      awaitingB = true;
+      highlight(value);
+      expr.textContent = `${A} ${value}`;
+      return;
+    }
+
+    // =
+    if (value === "=") {
+      if (operator !== null) {
+        const bVal = justEvaluated ? B : scr.textContent;
+        const res  = compute(operator, A, bVal);
+        if (res.error) { setScreen(res.error); clearAll(); return; }
+        expr.textContent = `${A} ${operator} ${bVal} =`;
+        B = bVal;
+        A = res.result;
+        setScreen(res.result);
+        justEvaluated = true;
+        awaitingB = false;
+        highlight(null);
+      }
+      return;
+    }
+  }
+
+  // ── Wire buttons ──────────────────────────────────────────────────────────
+  document.querySelectorAll(".btn").forEach(btn => {
+    const v = btn.dataset.v;
+    if ("÷×-+=√".includes(v)) opBtns[v] = btn;
+    btn.addEventListener("click", () => click(v));
+  });
+
+  // ── Keyboard ──────────────────────────────────────────────────────────────
+  const KEY = {
+    Enter:"=", "=":"=", "+":"+", "-":"-", "*":"×", "/":"÷",
+    "%":"%", Backspace:"⌫", Delete:"⌫", Escape:"AC",
+    r:"√", R:"√", ".":"."
+  };
+  "0123456789".split("").forEach(d => KEY[d] = d);
+
+  document.addEventListener("keydown", e => {
+    const m = KEY[e.key];
+    if (m) { e.preventDefault(); click(m); }
+  });
+</script>
+</body>
+</html>
